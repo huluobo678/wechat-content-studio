@@ -10,68 +10,15 @@
 
 'use strict';
 
-// ── 浏览器标识池：不同设备形态交替使用，降低被限风险 ──
-const BROWSER_SIGNATURES = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/124.0.0.0 Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
-];
-
-const pickSignature = () =>
-  BROWSER_SIGNATURES[Math.floor(Math.random() * BROWSER_SIGNATURES.length)];
-
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ── 带超时与重试的抓取封装（fetch 自动处理内容编码）──
-async function getText(url, { timeoutMs = 20000, attempts = 1, extraHeaders = {} } = {}) {
-  let lastError;
-  for (let i = 0; i < attempts; i++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const resp = await fetch(url, {
-        headers: {
-          'User-Agent': pickSignature(),
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-          ...extraHeaders,
-        },
-        signal: ctrl.signal,
-      });
-      return { ok: resp.ok, status: resp.status, headers: resp.headers, text: await resp.text() };
-    } catch (e) {
-      lastError = e;
-      if (i < attempts - 1) await wait(500 + i * 400);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastError;
-}
-
-// ── 从响应头中收集 Cookie ──
-function collectCookies(headers) {
+// 单次标准请求；若服务限制访问或发生网络错误，不自动伪装身份或重试。
+async function getText(url, { timeoutMs = 20000, redirect = 'follow' } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return headers.getSetCookie().map((c) => c.split(';')[0]).filter(Boolean).join('; ');
-  } catch {
-    return '';
-  }
-}
-
-// ── 预取搜狗会话 Cookie（用于真实链接解析）──
-async function acquireSessionCookie() {
-  try {
-    const { headers } = await getText('https://v.sogou.com/v?ie=utf8&query=&p=40030600', {
-      timeoutMs: 10000,
-      attempts: 2,
-    });
-    return collectCookies(headers);
-  } catch {
-    return '';
+    const resp = await fetch(url, { signal: ctrl.signal, redirect });
+    return { ok: resp.ok, status: resp.status, headers: resp.headers, url: resp.url, text: await resp.text() };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -166,29 +113,14 @@ function sliceItemBlocks(html) {
 }
 
 // ── 搜狗跳转链接 → 微信真实地址 ──
-async function unwrapLink(sogouUrl, cookie) {
+async function unwrapLink(sogouUrl) {
   if (!sogouUrl.includes('weixin.sogou.com')) return { url: sogouUrl, ok: false };
-
-  const cookieLine = cookie
-    ? 'ABTEST=7|1716888919|v1; IPLOC=CN5101; ' + cookie
-    : 'ABTEST=7|1716888919|v1; IPLOC=CN5101';
-
-  // 手动跟随重定向，截获 Location 头
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const resp = await fetch(sogouUrl, {
-      redirect: 'manual',
-      signal: ctrl.signal,
-      headers: { 'User-Agent': pickSignature(), 'Cookie': cookieLine },
-    });
-    const loc = resp.headers.get('location') || '';
-    if (loc.includes('mp.weixin.qq.com')) return { url: loc, ok: true };
+    const resp = await getText(sogouUrl, { timeoutMs: 8000, redirect: 'follow' });
+    if (resp.url?.startsWith('https://mp.weixin.qq.com/')) return { url: resp.url, ok: true };
     return { url: sogouUrl, ok: false };
   } catch {
     return { url: sogouUrl, ok: false };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -198,7 +130,7 @@ async function fetchBodyText(articleUrl) {
     return { text: '', ok: false, reason: '非微信文章链接' };
   }
   try {
-    const { ok, status, text } = await getText(articleUrl, { timeoutMs: 30000, attempts: 2 });
+    const { ok, status, text } = await getText(articleUrl, { timeoutMs: 30000 });
     if (!ok) return { text: '', ok: false, reason: `HTTP ${status}` };
 
     const marker = 'id="js_content"';
@@ -233,7 +165,11 @@ async function runSearch(keyword, limit = 10, opts = {}) {
     const q = encodeURIComponent(keyword);
     const searchUrl = `https://weixin.sogou.com/weixin?query=${q}&s_from=input&_sug_=n&type=2&page=${page}&ie=utf8`;
     try {
-      const { text } = await getText(searchUrl, { timeoutMs: 30000, attempts: 2 });
+      const { ok, status, text } = await getText(searchUrl, { timeoutMs: 30000 });
+      if (!ok) {
+        console.error(`第 ${page} 页请求被拒绝（HTTP ${status}），停止检索，不自动重试。`);
+        break;
+      }
       const items = sliceItemBlocks(text)
         .map(parseOneItem)
         .filter(Boolean)
@@ -243,21 +179,17 @@ async function runSearch(keyword, limit = 10, opts = {}) {
       console.error(`第 ${page} 页抓取失败: ${e.message}`);
       break;
     }
-    if (page < pages) await wait(600 + Math.random() * 900);
   }
 
   const results = collected.slice(0, capped);
   const needUnwrap = resolveUrl || fetchBody;
-  let cookie = '';
 
   if (needUnwrap) {
     console.error('正在解析真实链接...');
-    cookie = await acquireSessionCookie();
     for (let i = 0; i < results.length; i++) {
-      const { url, ok } = await unwrapLink(results[i].url, cookie);
+      const { url, ok } = await unwrapLink(results[i].url);
       results[i].url = ok ? url : results[i].url;
       results[i].url_resolved = ok;
-      await wait(500 + Math.random() * 800);
     }
   }
 
@@ -277,7 +209,6 @@ async function runSearch(keyword, limit = 10, opts = {}) {
         item.word_count = 0;
       }
       item.content_fetched = ok;
-      if (i < results.length - 1) await wait(800 + Math.random() * 1200);
     }
     console.error(`正文抓取完成: 成功 ${okCount}/${results.length}`);
   }

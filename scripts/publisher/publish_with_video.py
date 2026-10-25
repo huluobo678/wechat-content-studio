@@ -9,7 +9,7 @@
 凭证：环境变量 WECHAT_APP_ID / WECHAT_APP_SECRET，或 ~/.workbuddy/TOOLS.md / ~/.codebuddy/TOOLS.md
 """
 
-import sys, os, re, json, time, subprocess
+import sys, os, re, json, subprocess
 import urllib.request
 from pathlib import Path
 
@@ -17,7 +17,6 @@ TOOLS_MD_PATHS = [
     Path.home() / ".workbuddy" / "TOOLS.md",
     Path.home() / ".codebuddy" / "TOOLS.md",
 ]
-TOKEN_CACHE = Path.home() / ".config" / "wenyan-md" / "token.json"
 THEME = "lapis"
 HIGHLIGHT = "solarized-light"
 
@@ -56,11 +55,7 @@ def get_token(app_id, secret):
     data = _http_json(url)
     if "access_token" not in data:
         raise RuntimeError(f"获取 token 失败: {data}")
-    token = data["access_token"]
-    expire = int(time.time()) + data.get("expires_in", 7200)
-    TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_CACHE.write_text(json.dumps({"appid": app_id, "accessToken": token, "expireAt": expire}))
-    return token
+    return data["access_token"]
 
 
 def upload_video(token, video_path, title="视频"):
@@ -198,7 +193,7 @@ def main():
 
     app_id, secret = load_credentials()
     token = get_token(app_id, secret)
-    print(f"token 就绪: {token[:16]}...")
+    print("公众号接口凭证已就绪")
 
     original = md_file.read_text(encoding="utf-8")
     patched, placeholders = process_videos(original, md_file.parent, token)

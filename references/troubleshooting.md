@@ -43,15 +43,15 @@ cover: D:\绝对\路径\封面.jpg
 - 网络图不可访问 → `curl -I URL` 验证
 
 ### 40001 token 失效
-用 `python scripts/publisher/publish_with_video.py`（自带 token 刷新与缓存）。
+确认 AppID/Secret 与公众号接口权限无误后再重试。视频脚本按需获取 token，不将 token 写入本地缓存；不要把凭证或完整请求 URL 发给他人排查。
 
 ## 检索类
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| 空结果 | 搜狗反爬 / IP 受限 | 放缓频率、稍后重试 |
+| 空结果 | 搜索无匹配或服务限制访问 | 检查关键词和官方可用入口；若服务拒绝/限制访问，停止自动请求，不通过更换网络、伪装身份或重试绕过限制 |
 | url_resolved: false | 搜狗真实链接解析失败 | 正常现象，改用存档模块 |
-| 命中 antispider 页 | 触发验证码 | 停用一段时间 |
+| 命中 antispider 页 | 服务限制访问或要求验证 | 停止自动抓取；使用平台提供的正常访问方式，遵守其条款，不自动处理验证码或规避限制 |
 
 ## 存档类
 
@@ -59,8 +59,8 @@ cover: D:\绝对\路径\封面.jpg
 |------|------|------|
 | 未找到 Chrome/Edge | 未装或路径特殊 | 安装浏览器，或改 `BrowserLocator.candidates()` |
 | puppeteer 启动失败 | 依赖未装 | `cd scripts/downloader && npm install` |
-| 环境异常拦截 | 反爬 / 需登录 | 稍后或换网络 |
-| 找不到 #js_content | 文章删除或需登录 | 核对链接 |
+| 环境异常拦截 | 平台拒绝访问或需要验证/登录 | 停止请求；不换网络绕过、不模拟登录、不尝试规避平台限制 |
+| 找不到 #js_content | 文章删除、页面结构变化或需登录 | 核对链接和正常访问权限；若仍不可访问则停止，不尝试绕过限制 |
 
 ## 调试
 
@@ -68,6 +68,6 @@ cover: D:\绝对\路径\封面.jpg
 $env:DEBUG = "wenyan:*"
 wenyan publish -f article.md -t lapis -h solarized-light
 ```
-或先渲染不发布：`wenyan render -f article.md`，确认无误再 publish。
+或先渲染不发布：`wenyan render -f article.md`，确认无误再 publish。发布脚本不会自动安装全局依赖；首次安装前先核对依赖来源和版本。
 
 参考：wenyan-cli (github.com/caol64/wenyan-cli) · 微信开发文档 (developers.weixin.qq.com/doc/offiaccount)

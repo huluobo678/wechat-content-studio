@@ -220,19 +220,19 @@ async function main() {
   const browser = await pptr.launch({
     headless: true,
     executablePath: exe,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security'],
   });
 
   const page = await browser.newPage();
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
-  );
   await page.setViewport({ width: 1280, height: 900 });
 
   // 媒体请求探针
   const seenVideos = new Set();
   const seenAudio = new Set();
+  let mainDocumentStatus = 0;
   page.on('response', (resp) => {
+    if (resp.request().isNavigationRequest() && resp.frame() === page.mainFrame()) {
+      mainDocumentStatus = resp.status();
+    }
     const u = resp.url();
     const type = resp.headers()['content-type'] || '';
     if (/video\//.test(type) || /\.(mp4|m3u8|flv)(\?|$)/i.test(u) || u.includes('mpvideo.qpic.cn')) {
@@ -252,9 +252,15 @@ async function main() {
     process.exit(1);
   }
 
-  const blocked = await page.evaluate(() => document.body?.innerText?.includes('环境异常'));
+  if (mainDocumentStatus === 403 || mainDocumentStatus === 429) {
+    console.error(`平台拒绝或限制访问（HTTP ${mainDocumentStatus}），停止存档；请使用平台提供的正常访问方式。`);
+    await browser.close();
+    process.exit(1);
+  }
+
+  const blocked = await page.evaluate(() => /环境异常|访问频繁|操作过于频繁|请完成验证/.test(document.body?.innerText || ''));
   if (blocked) {
-    console.error('微信环境检测拦截，稍后重试');
+    console.error('页面要求验证或限制访问，停止存档；不尝试绕过限制。');
     await browser.close();
     process.exit(1);
   }

@@ -12,14 +12,10 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step($Text, $Color) { Write-Host $Text -ForegroundColor $Color }
 
-# 1. 确保 wenyan-cli 可用
+# 1. 检查 wenyan-cli；不在发布时自动安装全局软件
 if (-not (Get-Command wenyan -ErrorAction SilentlyContinue)) {
-    Write-Step "wenyan-cli 未安装，尝试自动安装..." Yellow
-    npm install -g @wenyan-md/cli
-    if ($LASTEXITCODE -ne 0) {
-        Write-Step "自动安装失败，请手动执行: npm install -g @wenyan-md/cli" Red
-        exit 1
-    }
+    Write-Step "wenyan-cli 未安装。请先阅读并确认依赖后手动安装: npm install -g @wenyan-md/cli" Red
+    exit 1
 }
 
 # 2. 加载凭证：环境变量优先，其次扫描 WorkBuddy/CodeBuddy 的 TOOLS.md
