@@ -1,0 +1,83 @@
+# 📦 公众号内容工坊（wechat-content-studio）
+
+> WorkBuddy Skill — 公众号创作一条龙：**检索 → 存档 → 改写 → 发布**。
+
+| 模块 | 能力 |
+|------|------|
+| 🔍 检索 | 搜狗微信关键词搜索，支持抓正文 |
+| 💾 存档 | 文章落盘：Markdown + HTML + 图片 + 视频 |
+| ✏️ 改写 | AI 辅助去 AI 腔、降重、原创化 |
+| 📤 发布 | wenyan 一键进公众号草稿箱，支持视频 |
+
+## 环境要求
+
+- Node.js ≥ 18
+- Chrome 或 Edge（存档模块需要，自动探测）
+- WorkBuddy 运行环境
+
+## 安装
+
+```powershell
+# 复制到 WorkBuddy 用户 skills 目录
+Copy-Item -Recurse wechat-content-studio "$env:USERPROFILE\.workbuddy\skills\"
+
+# 依赖
+cd scripts/downloader && npm install
+npm install -g @wenyan-md/cli
+```
+
+检索模块零依赖，无需安装。
+
+## 使用
+
+### 检索文章
+
+```bash
+node scripts/search/search.js "关键词" [-n 10] [-o result.json] [-r] [-c]
+```
+
+### 存档文章
+
+```bash
+node scripts/downloader/download.js --set-output "D:\wechat-articles"   # 首次
+node scripts/downloader/download.js "https://mp.weixin.qq.com/s/xxx"
+```
+
+输出：`<标题>/` 下 `article.md` + `article.html` + `metadata.json` + `images/` + `videos/`
+
+### 改写文章
+
+对话触发："帮我洗稿""改成原创""去 AI 味""降查重"。改写策略与 21 项 AI 痕迹检查表见 [SKILL.md](SKILL.md)。
+
+### 发布草稿
+
+```powershell
+setx WECHAT_APP_ID <appid>
+setx WECHAT_APP_SECRET <secret>
+
+powershell -File scripts/publisher/publish.ps1 -File "D:\article.md"
+python scripts/publisher/publish_with_video.py article.md   # 含视频
+```
+
+> IP 需加入公众号后台白名单；Markdown 顶部必须含 `title` + `cover` frontmatter。
+
+## 结构
+
+```
+wechat-content-studio/
+├── SKILL.md                  # WorkBuddy Skill 定义
+├── README.md
+├── LICENSE                   # MIT（作者：花灼欲落）
+├── references/
+│   ├── themes.md             # wenyan 主题与高亮
+│   └── troubleshooting.md    # 常见问题排查
+└── scripts/
+    ├── search/search.js               # 检索（零依赖）
+    ├── downloader/download.js         # 存档（puppeteer-core）
+    └── publisher/publish.ps1          # 发布
+        publish_with_video.py          # 含视频发布
+```
+
+## License
+
+MIT © 花灼欲落 — 详见 [LICENSE](LICENSE)。

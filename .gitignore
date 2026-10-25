@@ -1,0 +1,11 @@
+# 依赖
+node_modules/
+
+# 运行时配置（用户本机状态）
+scripts/downloader/settings.json
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+{
+    "name": "wechat-content-studio-downloader",
+    "version": "1.0.0",
+    "description": "微信公众号文章本地存档 - WorkBuddy Skill",
+    "type": "module",
+    "dependencies": {
+        "puppeteer-core": "^24.0.0"
+    }
+}
