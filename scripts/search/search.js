@@ -10,6 +10,9 @@
 
 'use strict';
 
+// 温和节流：仅作为请求间隔，避免高频连续请求；不涉及身份伪装或限制规避。
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // 单次标准请求；若服务限制访问或发生网络错误，不自动伪装身份或重试。
 async function getText(url, { timeoutMs = 20000, redirect = 'follow' } = {}) {
   const ctrl = new AbortController();
@@ -112,12 +115,45 @@ function sliceItemBlocks(html) {
   return blocks;
 }
 
+// ── 从跳转页 HTML 中提取真实地址（服务端返回的跳转页属正常页面内容）──
+function extractJumpUrl(html) {
+  // meta refresh: <meta http-equiv="refresh" content="0; url=...">
+  const meta = html.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["']\d+;\s*url=([^"']+)["']/i);
+  if (meta) return meta[1];
+
+  // 常规 JS 跳转: location.href / window.location / location.replace
+  const js = html.match(/location(?:\.href)?\s*=\s*["']([^"']+)["']/i) ||
+    html.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
+    html.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i);
+  if (js) return js[1];
+
+  // 拼接式跳转: url += '...' 拼出 mp.weixin.qq.com 链接
+  const parts = [];
+  for (const m of html.matchAll(/url\s*\+=\s*["']([^"']*)["']/gi)) parts.push(m[1]);
+  if (parts.length) {
+    const joined = parts.join('');
+    if (joined.includes('mp.weixin.qq.com')) return joined;
+  }
+
+  return null;
+}
+
 // ── 搜狗跳转链接 → 微信真实地址 ──
 async function unwrapLink(sogouUrl) {
   if (!sogouUrl.includes('weixin.sogou.com')) return { url: sogouUrl, ok: false };
   try {
+    // 第一层：跟随重定向，检查最终地址
     const resp = await getText(sogouUrl, { timeoutMs: 8000, redirect: 'follow' });
     if (resp.url?.startsWith('https://mp.weixin.qq.com/')) return { url: resp.url, ok: true };
+
+    // 第二层：若仍停在搜狗跳转页，解析页面内声明的跳转地址
+    const jump = extractJumpUrl(resp.text || '');
+    if (jump) {
+      const target = jump.startsWith('//') ? 'https:' + jump
+        : jump.startsWith('/') ? 'https://weixin.sogou.com' + jump
+        : jump;
+      if (target.includes('mp.weixin.qq.com')) return { url: target, ok: true };
+    }
     return { url: sogouUrl, ok: false };
   } catch {
     return { url: sogouUrl, ok: false };
@@ -179,6 +215,8 @@ async function runSearch(keyword, limit = 10, opts = {}) {
       console.error(`第 ${page} 页抓取失败: ${e.message}`);
       break;
     }
+    // 页间温和节流，避免高频连续请求
+    if (page < pages) await delay(700 + Math.random() * 500);
   }
 
   const results = collected.slice(0, capped);
@@ -190,6 +228,8 @@ async function runSearch(keyword, limit = 10, opts = {}) {
       const { url, ok } = await unwrapLink(results[i].url);
       results[i].url = ok ? url : results[i].url;
       results[i].url_resolved = ok;
+      // 链接解析间温和节流
+      if (i < results.length - 1) await delay(500 + Math.random() * 500);
     }
   }
 
@@ -209,6 +249,8 @@ async function runSearch(keyword, limit = 10, opts = {}) {
         item.word_count = 0;
       }
       item.content_fetched = ok;
+      // 正文抓取间温和节流
+      if (i < results.length - 1) await delay(700 + Math.random() * 600);
     }
     console.error(`正文抓取完成: 成功 ${okCount}/${results.length}`);
   }
