@@ -6,7 +6,7 @@ description: >-
   适用于搜索公众号文章、下载微信文章、改写降重去AI味、或发布文章到公众号等场景。
 description_zh: "公众号文章搜索、存档、润色、发布一站式工具"
 description_en: "WeChat OA article search, archiving, rewriting, and publishing toolkit."
-version: 1.0.0
+version: 1.1.0
 agent_created: true
 allowed-tools: Read,Write,Edit,Bash,Run
 ---
