@@ -18,31 +18,12 @@ if (-not (Get-Command wenyan -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# 2. 加载凭证：环境变量优先，其次扫描 WorkBuddy/CodeBuddy 的 TOOLS.md
+# 2. 从当前进程环境读取凭证；不从 Agent 可读取的说明文件加载密钥
 $AppId = $env:WECHAT_APP_ID
 $AppSecret = $env:WECHAT_APP_SECRET
 
 if (-not $AppId -or -not $AppSecret) {
-    $toolsPaths = @(
-        (Join-Path $env:USERPROFILE ".workbuddy\TOOLS.md"),
-        (Join-Path $env:USERPROFILE ".codebuddy\TOOLS.md")
-    )
-    foreach ($p in $toolsPaths) {
-        if (Test-Path $p) {
-            $raw = Get-Content $p -Raw -ErrorAction SilentlyContinue
-            if ($raw) {
-                $mId = [regex]::Match($raw, 'export\s+WECHAT_APP_ID\s*=\s*(\S+)')
-                $mSec = [regex]::Match($raw, 'export\s+WECHAT_APP_SECRET\s*=\s*(\S+)')
-                if (-not $AppId -and $mId.Success) { $AppId = $mId.Groups[1].Value }
-                if (-not $AppSecret -and $mSec.Success) { $AppSecret = $mSec.Groups[1].Value }
-            }
-        }
-        if ($AppId -and $AppSecret) { break }
-    }
-}
-
-if (-not $AppId -or -not $AppSecret) {
-    Write-Step "缺少微信公众号凭证。`n  setx WECHAT_APP_ID <appid>`n  setx WECHAT_APP_SECRET <secret>`n  或写入 ~/.workbuddy/TOOLS.md" Red
+    Write-Step "缺少微信公众号凭证。请在当前 PowerShell 会话设置 WECHAT_APP_ID / WECHAT_APP_SECRET。不要把密钥写入 Skill、Markdown 或 Agent 可读取的说明文件。" Red
     exit 1
 }
 
@@ -57,17 +38,25 @@ Write-Step "发布文章..." Green
 Write-Host "  文件: $File"
 Write-Host "  主题: $Theme / 高亮: $Highlight"
 
-$env:WECHAT_APP_ID = $AppId
-$env:WECHAT_APP_SECRET = $AppSecret
-wenyan publish -f $File -t $Theme -h $Highlight
+$previousAppId = $env:WECHAT_APP_ID
+$previousAppSecret = $env:WECHAT_APP_SECRET
+try {
+    $env:WECHAT_APP_ID = $AppId
+    $env:WECHAT_APP_SECRET = $AppSecret
+    wenyan publish -f $File -t $Theme -h $Highlight
+    $publishExitCode = $LASTEXITCODE
+} finally {
+    $env:WECHAT_APP_ID = $previousAppId
+    $env:WECHAT_APP_SECRET = $previousAppSecret
+}
 
-if ($LASTEXITCODE -eq 0) {
+if ($publishExitCode -eq 0) {
     Write-Step "发布成功！草稿已进入公众号后台草稿箱" Green
     Write-Step "https://mp.weixin.qq.com/" Yellow
 } else {
     Write-Step "发布失败。常见原因:" Red
     Write-Step "  1. IP 未加入公众号后台白名单" Yellow
-    Write-Step "  2. Markdown 缺 title/cover frontmatter" Yellow
+    Write-Step "  2. Markdown 缺 title，或没有可用正文图片且未提供 cover" Yellow
     Write-Step "  3. 凭证错误或已过期" Yellow
     exit 1
 }

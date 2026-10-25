@@ -1,13 +1,21 @@
 ---
 name: wechat-content-studio
 description: >-
-  公众号内容生产链路工具：搜狗微信文章检索、文章本地存档（正文/配图/视频）、
-  AI 辅助原创写作、事实核查与自有稿件润色、wenyan 草稿箱发布。
-  适用于搜索公众号文章、合规保存研究资料、基于多来源独立创作、润色自有稿件、或发布文章到公众号草稿箱等场景。
+  搜索和存档有权访问的公众号资料，辅助多来源独立创作、事实核查和自有稿件润色，并将经人工确认的文章提交到公众号草稿箱。
+display_name: 公众号内容工坊
+display_name_en: WeChat Content Studio
 description_zh: "公众号文章搜索、存档、润色、发布一站式工具"
-description_en: "WeChat OA article search, archiving, rewriting, and publishing toolkit."
-version: 1.1.0
-agent_created: true
+description_en: "Search and archive accessible WeChat articles, support original writing, and submit reviewed drafts to WeChat Official Accounts."
+examples_zh:
+  - "检索某主题的公众号文章并整理可追溯来源"
+  - "基于这些资料独立写一篇分析，并核对事实和引用"
+  - "检查我的稿件与素材后，提交到公众号草稿箱"
+examples_en:
+  - "Find WeChat articles about a topic and organize traceable sources"
+  - "Write an independent analysis from these sources and check facts and citations"
+  - "Review my article and media, then submit it as a WeChat draft"
+version: 1.2.1
+author: "花灼欲落"
 allowed-tools: Read,Write,Edit,Bash,Run
 ---
 
@@ -59,7 +67,7 @@ node {baseDir}/scripts/search/search.js "关键词" [-n N] [-o 文件] [-r] [-c]
 
 ```bash
 # 首次：装依赖 + 设默认目录
-cd {baseDir}/scripts/downloader && npm install
+cd {baseDir}/scripts/downloader && npm ci
 node {baseDir}/scripts/downloader/download.js --set-output "D:\wechat-articles"
 
 # 存档一篇文章（可直接粘贴搜狗搜索结果链接，浏览器会尝试自然跳转）
@@ -70,7 +78,7 @@ node {baseDir}/scripts/downloader/download.js "<url>" --no-image
 node {baseDir}/scripts/downloader/download.js "<url>" --no-video
 ```
 
-> 支持两种链接：`mp.weixin.qq.com` 文章链接（直接处理）；`weixin.sogou.com/link?url=...` 搜狗跳转链接（浏览器打开后等待自然跳转，若被搜狗验证拦截会明确提示并建议改用微信原文链接）。
+支持微信文章链接和搜狗微信跳转链接。跳转解析只跟随平台正常的 HTTPS 重定向；若服务要求验证或拒绝访问，停止请求，改用用户有权访问的微信原文链接。
 
 落盘结构：
 
@@ -111,7 +119,7 @@ node {baseDir}/scripts/downloader/download.js "<url>" --no-video
 5. 对必要引用作清晰标注 —— 引用只服务于评论、介绍或说明问题，控制在必要范围，标明作者、作品名和来源链接；需要更广泛使用时先取得许可
 6. 润色与交付 —— 可提供 3-5 个标题、稿件、来源清单、事实核验备注和素材授权待确认项
 
-### 改写策略
+### 写作策略
 
 **原创构思：**
 - 从用户的选题、受众和独立观点出发搭建结构，不以改变原文表面形式来降低相似度
@@ -176,9 +184,9 @@ node {baseDir}/scripts/downloader/download.js "<url>" --no-video
 # 首次
 npm install -g @wenyan-md/cli
 
-# 凭证（环境变量或 ~/.workbuddy/TOOLS.md）
-setx WECHAT_APP_ID <appid>
-setx WECHAT_APP_SECRET <secret>
+# 凭证仅从当前 PowerShell 进程环境读取；不要写入 Agent 可读文件
+$env:WECHAT_APP_ID = "<appid>"
+$env:WECHAT_APP_SECRET = "<secret>"
 ```
 
 > 注意：发布机公网 IP 需在公众号后台「开发 → 基本配置 → IP 白名单」中。
@@ -199,17 +207,17 @@ python {baseDir}/scripts/publisher/publish_with_video.py article.md
 ```markdown
 ---
 title: 标题（必填）
-cover: D:\绝对\路径\封面.jpg（必填，绝对路径）
+cover: D:\绝对\路径\封面.jpg（正文没有可用图片时填写）
 ---
 
 # 正文
 ```
 
-- `title` 与 `cover` 缺一不可；图片引用一律绝对路径
+- `title` 必填；正文没有可用图片时提供 `cover`。本地图片使用绝对路径
 - 主题：`default` / `lapis`（推荐）/ `phycat`；高亮：`solarized-light`（推荐）等
 - 视频：`![视频描述](media/video.mp4)` 会被自动上传并以 iframe 嵌入
 - 发布前由操作者确认：正文原创或已获必要许可；引用标注作者、作品名和来源；图片、视频、音频、封面等素材具有相应使用权；事实和引语已核验；目标账号、标题、封面和草稿内容无误
-- 发布脚本会读取公众号 AppID/Secret 并调用微信接口。仅在用户明确要求发布/创建草稿且已确认账号和稿件后运行；不要展示、记录或提交凭证到非预期位置
+- 发布脚本只从当前进程环境读取公众号 AppID/Secret 并调用微信接口，不从 Agent 可读取的 `TOOLS.md` 加载密钥。仅在用户明确要求发布/创建草稿且已确认账号和稿件后运行；不要展示、记录或提交凭证到非预期位置。视频上传由 Python 进程流式发送，不通过 curl 子进程参数传递 access token；微信 API 请求本身仍需通过 HTTPS 将 token 传给微信
 - 首次运行前先阅读脚本和依赖；PowerShell 发布脚本不会在运行时自动安装全局 npm 包，依赖需由操作者单独确认并安装
 
 ---

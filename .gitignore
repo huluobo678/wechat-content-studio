@@ -3,6 +3,9 @@ node_modules/
 
 # 运行时配置（用户本机状态）
 scripts/downloader/settings.json
+.env
+.env.*
+!.env.example
 
 # 日志与临时文件
 *.log
@@ -12,3 +15,4 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+.*_publish_*.md

@@ -12,6 +12,7 @@
 ## 环境要求
 
 - Node.js ≥ 18
+- Python ≥ 3.9（视频发布脚本需要）
 - Chrome 或 Edge（存档模块需要，自动探测）
 - WorkBuddy 运行环境
 
@@ -22,11 +23,11 @@
 Copy-Item -Recurse wechat-content-studio "$env:USERPROFILE\.workbuddy\skills\"
 
 # 依赖
-cd scripts/downloader && npm install
+cd scripts/downloader && npm ci
 npm install -g @wenyan-md/cli
 ```
 
-发布脚本运行时不会自动安装全局依赖。安装命令由操作者单独执行；使用前应确认包名、来源和当前版本。
+发布脚本运行时不会自动安装全局依赖。安装命令由操作者单独执行；使用前应确认包名、来源和当前版本。公众号密钥只从当前进程环境读取，不要写进 Skill、Markdown 或 Agent 可读取的说明文件。
 
 检索模块零依赖，无需安装。
 
@@ -56,14 +57,14 @@ node scripts/downloader/download.js "https://mp.weixin.qq.com/s/xxx"
 ### 发布草稿
 
 ```powershell
-setx WECHAT_APP_ID <appid>
-setx WECHAT_APP_SECRET <secret>
+$env:WECHAT_APP_ID = "<appid>"
+$env:WECHAT_APP_SECRET = "<secret>"
 
 powershell -File scripts/publisher/publish.ps1 -File "D:\article.md"
 python scripts/publisher/publish_with_video.py article.md   # 含视频
 ```
 
-> IP 需加入公众号后台白名单；Markdown 顶部必须含 `title` + `cover` frontmatter。
+> IP 需加入公众号后台白名单；Markdown 顶部必须含 `title`。正文没有可用图片时再提供 `cover` frontmatter。
 
 发布前由操作者核对稿件来源、授权、引用、事实、媒体素材及目标账号。视频发布脚本会向微信接口上传素材并更新草稿；只对已确认的稿件和授权账号运行。
 

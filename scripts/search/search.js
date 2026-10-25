@@ -14,12 +14,24 @@
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // 单次标准请求；若服务限制访问或发生网络错误，不自动伪装身份或重试。
-async function getText(url, { timeoutMs = 20000, redirect = 'follow' } = {}) {
+async function getText(url, { timeoutMs = 20000 } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const resp = await fetch(url, { signal: ctrl.signal, redirect });
-    return { ok: resp.ok, status: resp.status, headers: resp.headers, url: resp.url, text: await resp.text() };
+    const start = new URL(url);
+    let current = start;
+    let resp;
+    for (let hop = 0; hop <= 3; hop++) {
+      resp = await fetch(current, { signal: ctrl.signal, redirect: 'manual' });
+      const location = resp.headers.get('location');
+      if (resp.status < 300 || resp.status >= 400 || !location) break;
+      const next = new URL(location, current);
+      if (next.protocol !== 'https:' || next.hostname !== start.hostname ||
+          next.username || next.password || next.port || hop === 3) break;
+      await resp.body?.cancel();
+      current = next;
+    }
+    return { ok: resp.ok, status: resp.status, headers: resp.headers, url: current.href, text: await resp.text() };
   } finally {
     clearTimeout(timer);
   }
@@ -47,7 +59,15 @@ function parseOneItem(blockHtml) {
 
   if (!titleMatch) return null;
 
-  const rawUrl = titleMatch[1] || '';
+  const rawUrl = deEntify(titleMatch[1] || '');
+  let articleUrl;
+  try {
+    articleUrl = new URL(rawUrl, 'https://weixin.sogou.com');
+  } catch {
+    return null;
+  }
+  if (articleUrl.protocol !== 'https:' || articleUrl.hostname !== 'weixin.sogou.com' ||
+      articleUrl.username || articleUrl.password || articleUrl.port) return null;
   const title = deEntify(titleMatch[2].replace(/<[^>]+>/g, ''));
 
   // 解析相对时间文本（"5小时前" / "3天前" / "刚刚"）
@@ -57,7 +77,7 @@ function parseOneItem(blockHtml) {
 
   return {
     title,
-    url: rawUrl.startsWith('/') ? 'https://weixin.sogou.com' + rawUrl : rawUrl,
+    url: articleUrl.href,
     summary: deEntify((summaryMatch && summaryMatch[1] || '').replace(/<[^>]+>/g, '')),
     source: deEntify((accountMatch && accountMatch[1] || '').replace(/<[^>]+>/g, '')),
     datetime: iso,
@@ -115,45 +135,24 @@ function sliceItemBlocks(html) {
   return blocks;
 }
 
-// ── 从跳转页 HTML 中提取真实地址（服务端返回的跳转页属正常页面内容）──
-function extractJumpUrl(html) {
-  // meta refresh: <meta http-equiv="refresh" content="0; url=...">
-  const meta = html.match(/<meta[^>]*http-equiv=["']refresh["'][^>]*content=["']\d+;\s*url=([^"']+)["']/i);
-  if (meta) return meta[1];
-
-  // 常规 JS 跳转: location.href / window.location / location.replace
-  const js = html.match(/location(?:\.href)?\s*=\s*["']([^"']+)["']/i) ||
-    html.match(/window\.location\s*=\s*["']([^"']+)["']/i) ||
-    html.match(/location\.replace\(\s*["']([^"']+)["']\s*\)/i);
-  if (js) return js[1];
-
-  // 拼接式跳转: url += '...' 拼出 mp.weixin.qq.com 链接
-  const parts = [];
-  for (const m of html.matchAll(/url\s*\+=\s*["']([^"']*)["']/gi)) parts.push(m[1]);
-  if (parts.length) {
-    const joined = parts.join('');
-    if (joined.includes('mp.weixin.qq.com')) return joined;
-  }
-
-  return null;
-}
-
 // ── 搜狗跳转链接 → 微信真实地址 ──
 async function unwrapLink(sogouUrl) {
-  if (!sogouUrl.includes('weixin.sogou.com')) return { url: sogouUrl, ok: false };
+  let parsed;
+  try { parsed = new URL(sogouUrl); } catch { return { url: sogouUrl, ok: false }; }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'weixin.sogou.com' ||
+      parsed.username || parsed.password || parsed.port) return { url: sogouUrl, ok: false };
   try {
-    // 第一层：跟随重定向，检查最终地址
-    const resp = await getText(sogouUrl, { timeoutMs: 8000, redirect: 'follow' });
-    if (resp.url?.startsWith('https://mp.weixin.qq.com/')) return { url: resp.url, ok: true };
-
-    // 第二层：若仍停在搜狗跳转页，解析页面内声明的跳转地址
-    const jump = extractJumpUrl(resp.text || '');
-    if (jump) {
-      const target = jump.startsWith('//') ? 'https:' + jump
-        : jump.startsWith('/') ? 'https://weixin.sogou.com' + jump
-        : jump;
-      if (target.includes('mp.weixin.qq.com')) return { url: target, ok: true };
+    // 只检查 HTTP Location，并仅接受微信文章域名；不自动跟随外部跳转。
+    const resp = await getText(sogouUrl, { timeoutMs: 8000 });
+    const location = resp.headers.get('location');
+    if (location) {
+      const destination = new URL(location, sogouUrl);
+      if (destination.protocol === 'https:' && destination.hostname === 'mp.weixin.qq.com' &&
+          !destination.username && !destination.password && !destination.port && /^\/s\//.test(destination.pathname)) {
+        return { url: destination.href, ok: true };
+      }
     }
+
     return { url: sogouUrl, ok: false };
   } catch {
     return { url: sogouUrl, ok: false };
@@ -162,7 +161,10 @@ async function unwrapLink(sogouUrl) {
 
 // ── 抓取微信正文纯文本 ──
 async function fetchBodyText(articleUrl) {
-  if (!articleUrl.includes('mp.weixin.qq.com')) {
+  let parsed;
+  try { parsed = new URL(articleUrl); } catch { return { text: '', ok: false, reason: '无效文章链接' }; }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'mp.weixin.qq.com' ||
+      parsed.username || parsed.password || parsed.port) {
     return { text: '', ok: false, reason: '非微信文章链接' };
   }
   try {

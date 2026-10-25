@@ -31,10 +31,12 @@ class SettingsStore {
 
   load() {
     try {
-      return JSON.parse(fs.readFileSync(this.file, 'utf-8'));
+      const config = JSON.parse(fs.readFileSync(this.file, 'utf-8'));
+      if (typeof config.defaultOutput === 'string' && config.defaultOutput.trim()) return config;
     } catch {
-      return { defaultOutput: path.join(os.homedir(), 'Downloads', 'wechat-articles') };
+      // Fall through to a safe default for missing or malformed settings.
     }
+    return { defaultOutput: path.join(os.homedir(), 'Downloads', 'wechat-articles') };
   }
 
   save(patch) {
@@ -75,41 +77,63 @@ class BrowserLocator {
 
 // ── 工具函数 ──
 const safeSegment = (name) =>
-  name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 100);
+  (name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').replace(/\s+/g, ' ').trim().slice(0, 90) || 'untitled-article')
+    .replace(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i, '_$1');
+
+const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[ch]));
+
+function allowedArticleUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return false;
+  return (u.hostname === 'mp.weixin.qq.com' && /^\/s\//.test(u.pathname)) ||
+    (u.hostname === 'weixin.sogou.com' && u.pathname === '/link' && u.searchParams.has('url'));
+}
 
 function extOf(url) {
   try {
     const u = new URL(url);
-    return u.searchParams.get('wx_fmt')
-      ? '.' + u.searchParams.get('wx_fmt')
-      : (path.extname(u.pathname) || '.jpg').slice(0, 5);
+    const fromQuery = (u.searchParams.get('wx_fmt') || '').toLowerCase();
+    const fromPath = path.extname(u.pathname).toLowerCase();
+    const ext = fromQuery ? `.${fromQuery}` : fromPath;
+    return new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.mp4', '.m3u8', '.flv', '.mp3', '.m4a']).has(ext)
+      ? ext : '.jpg';
   } catch {
     return '.jpg';
   }
 }
 
-async function pullBinary(url, dest, tries = 3) {
-  for (let i = 0; i < tries; i++) {
-    try {
-      const resp = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-          'Referer': 'https://mp.weixin.qq.com/',
-        },
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      await pipeline(Readable.fromWeb(resp.body), fs.createWriteStream(dest));
-      return true;
-    } catch (e) {
-      if (i === tries - 1) {
-        console.error(`  ✗ 下载失败 ${url.slice(0, 80)} → ${e.message}`);
-        return false;
-      }
-      await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
-    }
+async function pullBinary(url, dest) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return false; }
+  const mediaHosts = ['mmbiz.qpic.cn', 'mmbiz.qlogo.cn', 'wx.qlogo.cn', 'mpvideo.qpic.cn', 'res.wx.qq.com'];
+  if (parsed.protocol !== 'https:' || !mediaHosts.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
+    console.error(`  ✗ 跳过非微信媒体域名: ${parsed.hostname}`);
+    return false;
   }
-  return false;
+  try {
+    const resp = await fetch(url, { redirect: 'error' });
+    if (resp.status >= 400 && resp.status < 500) {
+      await resp.body?.cancel();
+      console.error(`  ✗ 媒体主机 ${parsed.hostname} 拒绝请求（HTTP ${resp.status}），停止，不自动重试。`);
+      return false;
+    }
+    if (!resp.ok) {
+      await resp.body?.cancel();
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const partial = `${dest}.part`;
+    await pipeline(Readable.fromWeb(resp.body), fs.createWriteStream(partial, { flags: 'wx' }));
+    fs.renameSync(partial, dest);
+    return true;
+  } catch (e) {
+    try { fs.rmSync(`${dest}.part`, { force: true }); } catch { /* best effort cleanup */ }
+    console.error(`  ✗ 媒体下载失败（${parsed.hostname}，${e.name || 'Error'}）。`);
+    return false;
+  }
 }
 
 function htmlToMarkdown(html) {
@@ -201,8 +225,16 @@ if (argv.includes('--show-config')) {
 
 const target = argv.find((a) => /^https?:\/\//i.test(a));
 if (!target) { console.error('请提供文章 URL'); process.exit(1); }
+if (!allowedArticleUrl(target)) {
+  console.error('仅支持 HTTPS 微信文章链接或搜狗微信文章跳转链接。');
+  process.exit(1);
+}
 
 const outIdx = argv.indexOf('--output') !== -1 ? argv.indexOf('--output') : argv.indexOf('-o');
+if (outIdx !== -1 && (!argv[outIdx + 1] || argv[outIdx + 1].startsWith('-'))) {
+  console.error('--output 需要一个目录参数');
+  process.exit(1);
+}
 const outputDir = outIdx !== -1 ? path.resolve(argv[outIdx + 1]) : store.load().defaultOutput;
 const skipImage = argv.includes('--no-image');
 const skipVideo = argv.includes('--no-video');
@@ -210,20 +242,37 @@ const skipVideo = argv.includes('--no-video');
 // ── 主执行 ──
 async function main() {
   console.log('微信公众号文章本地存档工具');
-  console.log(`目标: ${target}\n`);
+  console.log(`目标主机: ${new URL(target).hostname}\n`);
 
   const exe = BrowserLocator.find();
   if (!exe) { console.error('未找到 Chrome/Edge'); process.exit(1); }
   console.log(`浏览器: ${exe}`);
 
   const pptr = require('puppeteer-core');
-  const browser = await pptr.launch({
+  browser = await pptr.launch({
     headless: true,
     executablePath: exe,
   });
 
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
+  await page.setRequestInterception(true);
+  page.on('request', (request) => {
+    try {
+      const requestUrl = request.url();
+      if (/^(data|blob):/i.test(requestUrl)) return request.continue();
+      const remote = new URL(requestUrl);
+      const host = remote.hostname;
+      const trustedHost = [
+        'mp.weixin.qq.com', 'weixin.sogou.com', 'res.wx.qq.com',
+        'mmbiz.qpic.cn', 'mmbiz.qlogo.cn', 'wx.qlogo.cn', 'mpvideo.qpic.cn',
+      ].includes(host) || ['.qpic.cn', '.qlogo.cn', '.wx.qq.com'].some((suffix) => host.endsWith(suffix));
+      if (remote.protocol === 'https:' && trustedHost && !remote.username && !remote.password && !remote.port) {
+        return request.continue();
+      }
+    } catch { /* reject malformed or non-allowlisted requests */ }
+    return request.abort('blockedbyclient');
+  });
 
   // 媒体请求探针
   const seenVideos = new Set();
@@ -263,7 +312,7 @@ async function main() {
   try {
     await page.goto(target, { waitUntil: 'networkidle2', timeout: 60000 });
   } catch (e) {
-    console.error(`加载失败: ${e.message}`);
+    console.error(`页面加载失败（${e.name || 'Error'}）。`);
     await browser.close();
     process.exit(1);
   }
@@ -285,7 +334,7 @@ async function main() {
     console.log('已跳转到微信文章页，继续存档流程。');
   }
 
-  if (mainDocumentStatus === 403 || mainDocumentStatus === 429) {
+  if (mainDocumentStatus >= 400 && mainDocumentStatus < 500) {
     console.error(`平台拒绝或限制访问（HTTP ${mainDocumentStatus}），停止存档；请使用平台提供的正常访问方式。`);
     await browser.close();
     process.exit(1);
@@ -326,7 +375,19 @@ async function main() {
   console.log(`作者: ${meta.author}`);
   console.log(`时间: ${meta.publishTime}`);
 
-  const root = path.join(outputDir, safeSegment(meta.title));
+  const baseName = safeSegment(meta.title);
+  fs.mkdirSync(outputDir, { recursive: true });
+  let root;
+  for (let n = 1; ; n++) {
+    const candidate = path.join(outputDir, n === 1 ? baseName : `${baseName} (${n})`);
+    try {
+      fs.mkdirSync(candidate);
+      root = candidate;
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+  }
   const imgDir = path.join(root, 'images');
   const vidDir = path.join(root, 'videos');
   fs.mkdirSync(imgDir, { recursive: true });
@@ -395,13 +456,35 @@ async function main() {
   }
 
   console.log('\n保存正文...');
-  const bodyHtml = await page.evaluate(() => document.querySelector('#js_content')?.innerHTML || '');
+  const { bodyHtml, safeBodyHtml } = await page.evaluate(() => {
+    const source = document.querySelector('#js_content');
+    if (!source) return { bodyHtml: '', safeBodyHtml: '' };
+    const bodyHtml = source.innerHTML;
+    const clean = source.cloneNode(true);
+    clean.querySelectorAll('script,iframe,object,embed,form,base,meta,link,style,svg,math,video,audio,source,picture,canvas').forEach((el) => el.remove());
+    clean.querySelectorAll('*').forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.trim();
+        if (name.startsWith('on') || name === 'srcdoc' || name === 'style' || name === 'srcset') {
+          el.removeAttribute(attr.name);
+        } else if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(name) && /^(javascript|vbscript|data):/i.test(value)) {
+          el.removeAttribute(attr.name);
+        } else if (name === 'src') {
+          // Keep remote media as inert metadata in the archived HTML.
+          el.setAttribute('data-original-src', value);
+          el.removeAttribute(attr.name);
+        }
+      }
+    });
+    return { bodyHtml, safeBodyHtml: clean.innerHTML };
+  });
 
   const htmlFile = path.join(root, 'article.html');
   fs.writeFileSync(htmlFile, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${meta.title}</title>
+<html><head><meta charset="utf-8"><title>${escapeHtml(meta.title)}</title>
 <style>body{max-width:800px;margin:0 auto;padding:20px;font-family:sans-serif;line-height:1.8;color:#333}img{max-width:100%}.meta{color:#999;margin:20px 0;font-size:14px}</style>
-</head><body><h1>${meta.title}</h1><div class="meta">${meta.author} · ${meta.publishTime}</div>${bodyHtml}</body></html>`, 'utf-8');
+</head><body><h1>${escapeHtml(meta.title)}</h1><div class="meta">${escapeHtml(meta.author)} · ${escapeHtml(meta.publishTime)}</div>${safeBodyHtml}</body></html>`, 'utf-8');
 
   const mdFile = path.join(root, 'article.md');
   const md = `# ${meta.title}\n\n> **作者**: ${meta.author}  \n> **时间**: ${meta.publishTime}  \n${meta.digest ? `> **摘要**: ${meta.digest}  \n` : ''}> **原文**: [链接](${target})\n\n---\n\n${htmlToMarkdown(bodyHtml)}`;
@@ -425,7 +508,9 @@ async function main() {
   console.log(`MEDIA:${htmlFile}`);
 }
 
-main().catch((e) => {
+let browser;
+main().catch(async (e) => {
   console.error('执行出错:', e.message);
-  process.exit(1);
+  if (browser) await browser.close().catch(() => {});
+  process.exitCode = 1;
 });

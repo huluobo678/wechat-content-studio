@@ -14,18 +14,14 @@
 报错 `WECHAT_APP_ID is required`。
 解：
 ```powershell
-setx WECHAT_APP_ID <appid>
-setx WECHAT_APP_SECRET <secret>
+$env:WECHAT_APP_ID = "<appid>"
+$env:WECHAT_APP_SECRET = "<secret>"
 ```
-或写入 `~/.workbuddy/TOOLS.md`：
-```markdown
-export WECHAT_APP_ID=<appid>
-export WECHAT_APP_SECRET=<secret>
-```
+密钥只从当前命令进程的环境变量读取。不要写入 Skill、Markdown、聊天记录或 Agent 可读取的 `TOOLS.md`。
 
 ### 缺 frontmatter（最常见）
 报错 `未能找到文章封面`。
-解：文件顶部必须有 frontmatter，`title` 必填；`cover` 可省（正文首图自动作封面）：
+解：文件顶部必须有 frontmatter，`title` 必填；正文没有可用图片时才需提供 `cover`：
 ```markdown
 ---
 title: 标题
@@ -50,7 +46,7 @@ cover: D:\绝对\路径\封面.jpg
 | 现象 | 原因 | 处理 |
 |------|------|------|
 | 空结果 | 搜索无匹配或服务限制访问 | 检查关键词和官方可用入口；若服务拒绝/限制访问，停止自动请求，不通过更换网络、伪装身份或重试绕过限制 |
-| url_resolved: false | 搜狗真实链接解析失败 | 正常现象，改用存档模块 |
+| url_resolved: false | 搜狗未完成正常跳转或访问受限 | 使用平台正常可访问的微信原文链接；若平台拒绝/要求验证，停止请求，不通过其他方式绕过 |
 | 命中 antispider 页 | 服务限制访问或要求验证 | 停止自动抓取；使用平台提供的正常访问方式，遵守其条款，不自动处理验证码或规避限制 |
 
 ## 存档类
@@ -58,7 +54,7 @@ cover: D:\绝对\路径\封面.jpg
 | 现象 | 原因 | 处理 |
 |------|------|------|
 | 未找到 Chrome/Edge | 未装或路径特殊 | 安装浏览器，或改 `BrowserLocator.candidates()` |
-| puppeteer 启动失败 | 依赖未装 | `cd scripts/downloader && npm install` |
+| puppeteer 启动失败 | 依赖未装或安装不完整 | `cd scripts/downloader && npm ci` |
 | 环境异常拦截 | 平台拒绝访问或需要验证/登录 | 停止请求；不换网络绕过、不模拟登录、不尝试规避平台限制 |
 | 找不到 #js_content | 文章删除、页面结构变化或需登录 | 核对链接和正常访问权限；若仍不可访问则停止，不尝试绕过限制 |
 
