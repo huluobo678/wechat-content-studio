@@ -62,13 +62,15 @@ node {baseDir}/scripts/search/search.js "关键词" [-n N] [-o 文件] [-r] [-c]
 cd {baseDir}/scripts/downloader && npm install
 node {baseDir}/scripts/downloader/download.js --set-output "D:\wechat-articles"
 
-# 存档一篇文章
+# 存档一篇文章（可直接粘贴搜狗搜索结果链接，浏览器会尝试自然跳转）
 node {baseDir}/scripts/downloader/download.js "https://mp.weixin.qq.com/s/xxx"
 
 # 跳过图片或视频
 node {baseDir}/scripts/downloader/download.js "<url>" --no-image
 node {baseDir}/scripts/downloader/download.js "<url>" --no-video
 ```
+
+> 支持两种链接：`mp.weixin.qq.com` 文章链接（直接处理）；`weixin.sogou.com/link?url=...` 搜狗跳转链接（浏览器打开后等待自然跳转，若被搜狗验证拦截会明确提示并建议改用微信原文链接）。
 
 落盘结构：
 

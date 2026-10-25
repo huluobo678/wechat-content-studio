@@ -243,6 +243,22 @@ async function main() {
     }
   });
 
+  // 是否为搜狗跳转链接（weixin.sogou.com/link?url=...）
+  const isSogouJump = /^https?:\/\/weixin\.sogou\.com\/link\?/i.test(target);
+
+  // 等待浏览器自然跳转离开搜狗域（最多 12s）；不伪装、不处理验证码
+  async function waitForWechatNavigation() {
+    try {
+      await page.waitForFunction(
+        () => /^https?:\/\/mp\.weixin\.qq\.com\//.test(location.href),
+        { timeout: 12000 }
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   console.log('加载页面...');
   try {
     await page.goto(target, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -250,6 +266,23 @@ async function main() {
     console.error(`加载失败: ${e.message}`);
     await browser.close();
     process.exit(1);
+  }
+
+  // 搜狗跳转链接：等待浏览器自然跳转到微信文章页
+  if (isSogouJump) {
+    console.log('检测到搜狗跳转链接，等待自然跳转到微信文章页...');
+    const jumped = await waitForWechatNavigation();
+    if (!jumped) {
+      const current = page.url();
+      if (/antispider|verify|验证/i.test(current) || mainDocumentStatus === 403 || mainDocumentStatus === 429) {
+        console.error('搜狗跳转被验证/限制拦截，无法解析到微信文章地址。请改用微信文章链接（mp.weixin.qq.com/s/...）直接存档。');
+      } else {
+        console.error(`未能跳转到微信文章页（当前地址: ${current}）。请改用微信文章链接（mp.weixin.qq.com/s/...）直接存档。`);
+      }
+      await browser.close();
+      process.exit(1);
+    }
+    console.log('已跳转到微信文章页，继续存档流程。');
   }
 
   if (mainDocumentStatus === 403 || mainDocumentStatus === 429) {
